@@ -385,6 +385,7 @@ def build_tenure_usage_chart(customers, usage):
 
 st.set_page_config(page_title="고객은 왜 이탈하는가", layout="wide")
 st.title("고객은 왜 이탈하는가 — 이탈 원인 진단 대시보드")
+st.caption("EDATA 7기 김예림")
 
 data = load_data()
 customers = data["customers"]
