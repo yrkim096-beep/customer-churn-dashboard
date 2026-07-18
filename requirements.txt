@@ -1,0 +1,4 @@
+pandas>=3.0
+matplotlib>=3.11
+plotly>=6.9
+streamlit>=1.59
