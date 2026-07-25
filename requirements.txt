@@ -2,3 +2,6 @@ pandas>=3.0
 matplotlib>=3.11
 plotly>=6.9
 streamlit>=1.59
+google-cloud-bigquery>=3.0
+db-dtypes>=1.0
+statsmodels>=0.14
