@@ -6,6 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from google.cloud import bigquery
+from google.oauth2 import service_account
 from plotly.subplots import make_subplots
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -40,7 +41,14 @@ def load_data():
 
 @st.cache_data
 def load_agents():
-    client = bigquery.Client(project=PROJECT_ID)
+    if "gcp_service_account" in st.secrets:
+        credentials = service_account.Credentials.from_service_account_info(
+            dict(st.secrets["gcp_service_account"])
+        )
+        client = bigquery.Client(project=PROJECT_ID, credentials=credentials)
+    else:
+        client = bigquery.Client(project=PROJECT_ID)
+
     query = f"""
     SELECT agent_id, team, overtime_hours_avg, training_completed_yn, agent_satisfaction
     FROM `{PROJECT_ID}.cx_data.agents`
@@ -750,13 +758,15 @@ agent_metrics = merge_agent_csat(agents_scope, data["consultations"], data["sati
 st.subheader("⑦ eNPS로 본 직원 만족도")
 st.plotly_chart(build_enps_gauge(agents_scope, agents_all, team_choice), use_container_width=True)
 
-st.subheader("⑧ 번아웃(초과근무)과 CSAT의 관계")
-st.plotly_chart(build_burnout_scatter(agent_metrics, team_choice), use_container_width=True)
+col_scatter, col_training = st.columns(2)
+with col_scatter:
+    st.subheader("⑧ 번아웃(초과근무)과 CSAT의 관계")
+    st.plotly_chart(build_burnout_scatter(agent_metrics, team_choice), use_container_width=True)
+with col_training:
+    st.subheader("⑨ 교육 이수 여부와 CSAT·재문의율")
+    st.plotly_chart(build_training_chart(agents_scope, data["consultations"], data["satisfaction"]), use_container_width=True)
 
-st.subheader("⑨ 이상치 포함/제외 비교")
+st.subheader("⑩ 이상치 포함/제외 비교")
 outlier_fig, outlier_note = build_outlier_comparison(agent_metrics)
 st.plotly_chart(outlier_fig, use_container_width=True)
 st.caption(outlier_note)
-
-st.subheader("⑩ 교육 이수 여부와 CSAT·재문의율")
-st.plotly_chart(build_training_chart(agents_scope, data["consultations"], data["satisfaction"]), use_container_width=True)
