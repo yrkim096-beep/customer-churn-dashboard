@@ -56,6 +56,13 @@ def load_agents():
     return client.query(query).to_dataframe()
 
 
+@st.cache_data
+def load_report():
+    report_path = os.path.join(BASE_DIR, "report", "고객서비스_만족도개선_리포트.md")
+    with open(report_path, encoding="utf-8") as f:
+        return f.read()
+
+
 def build_voc_chart(customers, voc):
     target_voc = voc[(voc["category"] == "해지관련") & (voc["sentiment"] == "부정")]
     target_customer_ids = target_voc["customer_id"].unique()
@@ -718,55 +725,64 @@ st.set_page_config(page_title="고객은 왜 이탈하는가", layout="wide")
 st.title("고객은 왜 이탈하는가 — 이탈 원인 진단 대시보드")
 st.caption("EDATA 7기 김예림")
 
-data = load_data()
-customers = data["customers"]
+tab_dashboard, tab_report = st.tabs(["대시보드", "개선 제안 리포트"])
 
-overall_total = len(customers)
-overall_churned = int((customers["churn_yn"] == "Y").sum())
-overall_rate = overall_churned / overall_total * 100
+with tab_dashboard:
+    data = load_data()
+    customers = data["customers"]
 
-col1, col2, col3 = st.columns(3)
-col1.metric("전체 고객 수", f"{overall_total:,}명")
-col2.metric("이탈 고객 수", f"{overall_churned:,}명")
-col3.metric("전체 이탈율", f"{overall_rate:.1f}%")
+    overall_total = len(customers)
+    overall_churned = int((customers["churn_yn"] == "Y").sum())
+    overall_rate = overall_churned / overall_total * 100
 
-st.subheader("① VOC로 본 이탈")
-st.plotly_chart(build_voc_chart(data["customers"], data["voc"]), use_container_width=True)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("전체 고객 수", f"{overall_total:,}명")
+    col2.metric("이탈 고객 수", f"{overall_churned:,}명")
+    col3.metric("전체 이탈율", f"{overall_rate:.1f}%")
 
-st.subheader("② 채널·만족도로 본 이탈")
-st.plotly_chart(build_channel_csat_chart(data["satisfaction"], data["consultations"]), use_container_width=True)
+    st.subheader("① VOC로 본 이탈")
+    st.plotly_chart(build_voc_chart(data["customers"], data["voc"]), use_container_width=True)
 
-st.subheader("③ 재문의 반복으로 본 이탈")
-st.plotly_chart(build_recontact_bucket_chart(data["consultations"], data["customers"]), use_container_width=True)
+    st.subheader("② 채널·만족도로 본 이탈")
+    st.plotly_chart(build_channel_csat_chart(data["satisfaction"], data["consultations"]), use_container_width=True)
 
-st.subheader("④ 요금제로 본 이탈")
-st.plotly_chart(build_plan_chart(data["customers"]), use_container_width=True)
+    st.subheader("③ 재문의 반복으로 본 이탈")
+    st.plotly_chart(build_recontact_bucket_chart(data["consultations"], data["customers"]), use_container_width=True)
 
-st.subheader("⑤ 지역으로 본 이탈")
-st.plotly_chart(build_region_chart(data["customers"]), use_container_width=True)
+    st.subheader("④ 요금제로 본 이탈")
+    st.plotly_chart(build_plan_chart(data["customers"]), use_container_width=True)
 
-st.subheader("⑥ 가입기간·이용량으로 본 이탈")
-st.plotly_chart(build_tenure_usage_chart(data["customers"], data["usage"]), use_container_width=True)
+    st.subheader("⑤ 지역으로 본 이탈")
+    st.plotly_chart(build_region_chart(data["customers"]), use_container_width=True)
 
-st.header("상담원 관점: 직원만족도와 고객 경험")
+    st.subheader("⑥ 가입기간·이용량으로 본 이탈")
+    st.plotly_chart(build_tenure_usage_chart(data["customers"], data["usage"]), use_container_width=True)
 
-agents_all = load_agents()
-team_choice = st.selectbox("팀 선택", ["전체", "1팀", "2팀", "3팀"])
-agents_scope = agents_all if team_choice == "전체" else agents_all[agents_all["team"] == team_choice]
-agent_metrics = merge_agent_csat(agents_scope, data["consultations"], data["satisfaction"])
+    st.header("상담원 관점: 직원만족도와 고객 경험")
 
-st.subheader("⑦ eNPS로 본 직원 만족도")
-st.plotly_chart(build_enps_gauge(agents_scope, agents_all, team_choice), use_container_width=True)
+    agents_all = load_agents()
+    team_choice = st.selectbox("팀 선택", ["전체", "1팀", "2팀", "3팀"])
+    agents_scope = agents_all if team_choice == "전체" else agents_all[agents_all["team"] == team_choice]
+    agent_metrics = merge_agent_csat(agents_scope, data["consultations"], data["satisfaction"])
 
-col_scatter, col_training = st.columns(2)
-with col_scatter:
-    st.subheader("⑧ 번아웃(초과근무)과 CSAT의 관계")
-    st.plotly_chart(build_burnout_scatter(agent_metrics, team_choice), use_container_width=True)
-with col_training:
-    st.subheader("⑨ 교육 이수 여부와 CSAT·재문의율")
-    st.plotly_chart(build_training_chart(agents_scope, data["consultations"], data["satisfaction"]), use_container_width=True)
+    st.subheader("⑦ eNPS로 본 직원 만족도")
+    st.plotly_chart(build_enps_gauge(agents_scope, agents_all, team_choice), use_container_width=True)
 
-st.subheader("⑩ 이상치 포함/제외 비교")
-outlier_fig, outlier_note = build_outlier_comparison(agent_metrics)
-st.plotly_chart(outlier_fig, use_container_width=True)
-st.caption(outlier_note)
+    col_scatter, col_training = st.columns(2)
+    with col_scatter:
+        st.subheader("⑧ 번아웃(초과근무)과 CSAT의 관계")
+        st.plotly_chart(build_burnout_scatter(agent_metrics, team_choice), use_container_width=True)
+    with col_training:
+        st.subheader("⑨ 교육 이수 여부와 CSAT·재문의율")
+        st.plotly_chart(
+            build_training_chart(agents_scope, data["consultations"], data["satisfaction"]),
+            use_container_width=True,
+        )
+
+    st.subheader("⑩ 이상치 포함/제외 비교")
+    outlier_fig, outlier_note = build_outlier_comparison(agent_metrics)
+    st.plotly_chart(outlier_fig, use_container_width=True)
+    st.caption(outlier_note)
+
+with tab_report:
+    st.markdown(load_report())
