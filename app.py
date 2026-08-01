@@ -9,6 +9,8 @@ from google.cloud import bigquery
 from google.oauth2 import service_account
 from plotly.subplots import make_subplots
 
+import common as c
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
@@ -21,6 +23,7 @@ BLUE = "#2a78d6"
 FONT = dict(family="Malgun Gothic, sans-serif", color="#0b0b0b")
 
 PROJECT_ID = "project-e6454811-8996-4412-983"
+SNAPSHOT_DATE = "2026-08-01"  # data/agents_snapshot.csv를 재생성할 때 이 날짜도 함께 갱신할 것
 OUTLIER_AGENT_IDS = ["AG16", "AG20"]
 RED_BG = "#fbe4e4"
 NEUTRAL_BG = "#f0efec"
@@ -39,21 +42,52 @@ def load_data():
     }
 
 
-@st.cache_data
-def load_agents():
-    if "gcp_service_account" in st.secrets:
+def get_bigquery_client(project_id=PROJECT_ID):
+    try:
+        has_service_account_secret = "gcp_service_account" in st.secrets
+    except Exception:
+        has_service_account_secret = False
+
+    if has_service_account_secret:
         credentials = service_account.Credentials.from_service_account_info(
             dict(st.secrets["gcp_service_account"])
         )
-        client = bigquery.Client(project=PROJECT_ID, credentials=credentials)
-    else:
-        client = bigquery.Client(project=PROJECT_ID)
+        return bigquery.Client(project=project_id, credentials=credentials)
 
-    query = f"""
-    SELECT agent_id, team, overtime_hours_avg, training_completed_yn, agent_satisfaction
-    FROM `{PROJECT_ID}.cx_data.agents`
+    return bigquery.Client(project=project_id)
+
+
+@st.cache_data
+def load_agents():
     """
-    return client.query(query).to_dataframe()
+    먼저 BigQuery cx_data.agents 라이브 조회를 시도하고, 인증 실패·네트워크 문제 등
+    이유를 가리지 않고 예외가 나면 로컬 스냅샷 CSV(data/agents_snapshot.csv)로 대체한다.
+
+    Returns:
+        tuple[pandas.DataFrame, str]: (데이터, "live" 또는 "snapshot")
+    """
+    try:
+        client = get_bigquery_client()
+        query = f"""
+        SELECT agent_id, team, overtime_hours_avg, training_completed_yn, agent_satisfaction
+        FROM `{PROJECT_ID}.cx_data.agents`
+        """
+        return client.query(query).to_dataframe(), "live"
+    except Exception:
+        path = os.path.join(DATA_DIR, "agents_snapshot.csv")
+        df = pd.read_csv(path, encoding="utf-8-sig")
+        df["training_completed_yn"] = df["training_completed_yn"].astype(bool)
+        return df, "snapshot"
+
+
+def render_agents_source_badge(source):
+    if source == "live":
+        st.caption("🟢 BigQuery 라이브 데이터")
+        return
+    st.caption(
+        f"🟡 로컬 스냅샷 데이터 ({SNAPSHOT_DATE} 기준) — 배포 환경에 BigQuery 인증 정보가 없어 "
+        "그 시점 데이터로 대체 표시 중입니다."
+    )
 
 
 @st.cache_data
@@ -725,9 +759,7 @@ st.set_page_config(page_title="고객은 왜 이탈하는가", layout="wide")
 st.title("고객은 왜 이탈하는가 — 이탈 원인 진단 대시보드")
 st.caption("EDATA 7기 김예림")
 
-tab_dashboard, tab_report = st.tabs(["대시보드", "개선 제안 리포트"])
-
-with tab_dashboard:
+def render_dashboard_page():
     data = load_data()
     customers = data["customers"]
 
@@ -760,7 +792,8 @@ with tab_dashboard:
 
     st.header("상담원 관점: 직원만족도와 고객 경험")
 
-    agents_all = load_agents()
+    agents_all, agents_source = load_agents()
+    render_agents_source_badge(agents_source)
     team_choice = st.selectbox("팀 선택", ["전체", "1팀", "2팀", "3팀"])
     agents_scope = agents_all if team_choice == "전체" else agents_all[agents_all["team"] == team_choice]
     agent_metrics = merge_agent_csat(agents_scope, data["consultations"], data["satisfaction"])
@@ -784,5 +817,49 @@ with tab_dashboard:
     st.plotly_chart(outlier_fig, use_container_width=True)
     st.caption(outlier_note)
 
-with tab_report:
+
+def render_report_page():
     st.markdown(load_report())
+
+
+def render_channel_efficiency_page():
+    c.render_hero("채널 효율", "채널별 유입 1건당 비용 — 다음 분기 예산 배분의 근거")
+
+    spend_df, is_live = c.load_marketing_spend_with_fallback()
+    campaigns_df = c.load_marketing_campaigns()
+
+    overlap = c.verify_overlap(spend_df, campaigns_df, months=("2024-05", "2024-06"))
+    matched = int(overlap["match"].fillna(False).sum())
+    total = len(overlap)
+    icon = "✅" if matched == total else "⚠️"
+    source_label = "BigQuery 라이브" if is_live else "로컬 스냅샷"
+    st.caption(f"{icon} {matched}/{total} 채널×월 일치 (2024-05·06월 대조, {source_label} 기준)")
+
+    combined_df = c.build_marketing_spend_timeseries(spend_df, campaigns_df)
+    df = c.compute_channel_cost_efficiency(combined_df)
+
+    total_spend = df["spend_recent"].sum()
+    total_signups = df["signups_recent"].sum()
+    avg_cost = total_spend / total_signups if total_signups else float("nan")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        c.render_stat_tile("총 집행액 (최근 3개월)", f"{total_spend:,.0f}원")
+    with col2:
+        c.render_stat_tile("총 유입 (최근 3개월)", f"{total_signups:,.0f}건")
+    with col3:
+        c.render_stat_tile("평균 유입단가", f"{avg_cost:,.0f}원")
+
+    st.plotly_chart(c.build_channel_cost_chart(df), width="stretch", config=c.PLOTLY_CONFIG)
+    st.plotly_chart(c.build_channel_cost_compare_chart(df), width="stretch", config=c.PLOTLY_CONFIG)
+    st.plotly_chart(c.build_channel_execution_rate_chart(campaigns_df), width="stretch", config=c.PLOTLY_CONFIG)
+
+
+pg = st.navigation(
+    [
+        st.Page(render_dashboard_page, title="대시보드", default=True),
+        st.Page(render_report_page, title="개선 제안 리포트"),
+        st.Page(render_channel_efficiency_page, title="채널 효율"),
+    ]
+)
+pg.run()
