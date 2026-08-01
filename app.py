@@ -1,4 +1,5 @@
 import os
+import re
 
 import numpy as np
 import pandas as pd
@@ -94,7 +95,8 @@ def render_agents_source_badge(source):
 def load_report():
     report_path = os.path.join(BASE_DIR, "report", "고객서비스_만족도개선_리포트.md")
     with open(report_path, encoding="utf-8") as f:
-        return f.read()
+        raw = f.read()
+    return re.sub(r"^---\n.*?\n---\n", "", raw, count=1, flags=re.DOTALL)
 
 
 def build_voc_chart(customers, voc):
@@ -756,10 +758,11 @@ def build_training_chart(agents_scope, consultations, satisfaction):
 
 
 st.set_page_config(page_title="고객은 왜 이탈하는가", layout="wide")
-st.title("고객은 왜 이탈하는가 — 이탈 원인 진단 대시보드")
-st.caption("EDATA 7기 김예림")
+c.inject_global_css()
 
 def render_dashboard_page():
+    c.render_hero("고객은 왜 이탈하는가 — 이탈 원인 진단 대시보드", "EDATA 7기 김예림")
+
     data = load_data()
     customers = data["customers"]
 
@@ -768,9 +771,12 @@ def render_dashboard_page():
     overall_rate = overall_churned / overall_total * 100
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("전체 고객 수", f"{overall_total:,}명")
-    col2.metric("이탈 고객 수", f"{overall_churned:,}명")
-    col3.metric("전체 이탈율", f"{overall_rate:.1f}%")
+    with col1:
+        c.render_stat_tile("전체 고객 수", f"{overall_total:,}명")
+    with col2:
+        c.render_stat_tile("이탈 고객 수", f"{overall_churned:,}명")
+    with col3:
+        c.render_stat_tile("전체 이탈율", f"{overall_rate:.1f}%")
 
     st.subheader("① VOC로 본 이탈")
     st.plotly_chart(build_voc_chart(data["customers"], data["voc"]), use_container_width=True)
@@ -819,6 +825,16 @@ def render_dashboard_page():
 
 
 def render_report_page():
+    c.render_hero("개선 제안 리포트")
+
+    raw_markdown = c.load_report_markdown()
+    st.download_button(
+        "📄 PDF로 다운로드",
+        data=c.get_report_pdf_bytes(raw_markdown),
+        file_name="고객서비스_만족도개선_리포트.pdf",
+        mime="application/pdf",
+    )
+
     st.markdown(load_report())
 
 
@@ -850,14 +866,21 @@ def render_channel_efficiency_page():
     with col3:
         c.render_stat_tile("평균 유입단가", f"{avg_cost:,.0f}원")
 
+    st.subheader("① 채널별 유입 1건당 비용")
     st.plotly_chart(c.build_channel_cost_chart(df), width="stretch", config=c.PLOTLY_CONFIG)
+
+    st.subheader("② 최근 3개월 vs 누적 비교")
     st.plotly_chart(c.build_channel_cost_compare_chart(df), width="stretch", config=c.PLOTLY_CONFIG)
-    st.plotly_chart(c.build_channel_execution_rate_chart(campaigns_df), width="stretch", config=c.PLOTLY_CONFIG)
+
+    st.subheader("③ 채널별 연도별 단가 트렌드")
+    monthly_df = c.load_monthly_channel_cost()
+    channel_choice = st.selectbox("채널 선택", sorted(monthly_df["channel"].unique()))
+    st.plotly_chart(c.build_channel_trend_chart(monthly_df, channel_choice), width="stretch", config=c.PLOTLY_CONFIG)
 
 
 pg = st.navigation(
     [
-        st.Page(render_dashboard_page, title="대시보드", default=True),
+        st.Page(render_dashboard_page, title="고객 이탈원인 진단", default=True),
         st.Page(render_report_page, title="개선 제안 리포트"),
         st.Page(render_channel_efficiency_page, title="채널 효율"),
     ]
